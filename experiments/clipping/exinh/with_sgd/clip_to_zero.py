@@ -32,16 +32,16 @@ relative_sample_size = 0.1
 near_zero_border = 0.01
 sample_mask = None
 
-log_gradient_stats = False
+log_gradient_stats = True
 
 # mean and std for data.
 mean_input = 1.0
 stddev_input = 0.05
 
-optimizer = tf.keras.optimizers.SGD(learning_rate=0.1, momentum=0.9)
-activation_schema = ExhibitoryInhibitory(center=1.5, alpha=1.0)
-kernel_initializer = tf.keras.initializers.RandomUniform(minval=0.00000001, maxval=0.0001)
-bias_initializer = tf.keras.initializers.RandomUniform(minval=0.00000001, maxval=0.0001)
+optimizer = tf.keras.optimizers.SGD(learning_rate=0.01, momentum=0.9)
+activation_schema = ExhibitoryInhibitory(center=1.0, alpha=0.5)
+kernel_initializer = tf.keras.initializers.RandomUniform(minval=0.01, maxval=0.1)
+bias_initializer = tf.keras.initializers.RandomUniform(minval=0.0, maxval=0.0)
 
 # Dataset
 (train_images, train_labels), (test_images, test_labels) = datasets.cifar10.load_data()
@@ -81,7 +81,6 @@ class TensorboardCallback(tf.keras.callbacks.Callback):
                 sample_mask = tf.less(tf.random.uniform(complete_weight_checkpoint.shape), relative_sample_size)
 
             sampled_weight_checkpoint = tf.boolean_mask(complete_weight_checkpoint, sample_mask)
-            sampled_weight_checkpoint = tf.abs(sampled_weight_checkpoint)
 
             tf.summary.histogram("weights", sampled_weight_checkpoint, step=epoch)
 
@@ -141,42 +140,22 @@ class CustomModel(tf.keras.Model):
                                    bias_initializer=tf.constant_initializer(value=0),
                                    kernel_initializer=kernel_initializer),
             tf.keras.layers.AveragePooling2D((2, 2)),
-            tf.keras.layers.Conv2D(64, (3, 3), name="trainable/conv2",
+            tf.keras.layers.Conv2D(32, (3, 3), name="trainable/conv2",
                                    activation=activation_schema,
                                    bias_initializer=bias_initializer,
                                    kernel_initializer=kernel_initializer),
             tf.keras.layers.AveragePooling2D((2, 2)),
-            tf.keras.layers.Conv2D(64, (3, 3), name="trainable/conv3",
+            tf.keras.layers.Conv2D(32, (3, 3), name="trainable/conv3",
                                    activation=activation_schema,
                                    bias_initializer=bias_initializer,
                                    kernel_initializer=kernel_initializer),
 
             tf.keras.layers.Flatten(),
-            tf.keras.layers.Dense(512, name="trainable/dense1",
+            tf.keras.layers.Dense(64, name="trainable/dense1",
                                   activation=activation_schema,
                                   bias_initializer=bias_initializer,
                                   kernel_initializer=kernel_initializer),
-            tf.keras.layers.Dense(128, name="trainable/dense2",
-                                  activation=activation_schema,
-                                  bias_initializer=bias_initializer,
-                                  kernel_initializer=kernel_initializer),
-            tf.keras.layers.Dense(128, name="trainable/dense3",
-                                  activation=activation_schema,
-                                  bias_initializer=bias_initializer,
-                                  kernel_initializer=kernel_initializer),
-            tf.keras.layers.Dense(128, name="trainable/dense4",
-                                  activation=activation_schema,
-                                  bias_initializer=bias_initializer,
-                                  kernel_initializer=kernel_initializer),
-            tf.keras.layers.Dense(128, name="trainable/dense5",
-                                  activation=activation_schema,
-                                  bias_initializer=bias_initializer,
-                                  kernel_initializer=kernel_initializer),
-            tf.keras.layers.Dense(64, name="trainable/dense6",
-                                  activation=activation_schema,
-                                  bias_initializer=bias_initializer,
-                                  kernel_initializer=kernel_initializer),
-            tf.keras.layers.Dense(10, name="trainable/dense7",
+            tf.keras.layers.Dense(10, name="trainable/dense2",
                                   activation=activation_schema,
                                   bias_initializer=bias_initializer,
                                   kernel_initializer=kernel_initializer),

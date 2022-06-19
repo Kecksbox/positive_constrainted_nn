@@ -9,15 +9,56 @@ work_dir = "."
 # work_dir = os.environ["WORK"]
 
 import tensorflow as tf
+import tensorflow_probability as tfp
 
 from tensorflow.keras import datasets, layers, models
 
 from ActivationFunctions.Exhibitory import Exhibitory
 from ActivationFunctions.ExhibitoryInhibitory import ExhibitoryInhibitory
 from ActivationFunctions.Triangle import Triangle
-from Initializers.NormalSign import NormalSign
 from Optimizers.MadamSign import MadamSign
 from Optimizers.SGDSign import SGDSign, log_grad
+
+
+class NormalSign(tf.keras.initializers.Initializer):
+
+    def __init__(self, elements_in_sum: int, act_center: float, x_mean: float = 1.0, mean: float = 1.0, x_variance=0,
+                 x_squared_mean=0, y_variance=0, x=0, epsilon=1e-7):
+        assert mean > 0
+        self.mean = mean
+
+        self.elements_in_sum = elements_in_sum
+        self.epsilon = epsilon
+
+        self.x_mean = x_mean
+        self.act_center = act_center
+
+        self.x_variance = x_variance
+        self.x_squared_mean = x_squared_mean
+        self.y_variance = y_variance
+
+        self.x = x
+
+    def __call__(self, shape, dtype=None, **kwargs):
+        weight_mean = 1.0 / self.elements_in_sum
+
+        a = (self.y_variance / self.elements_in_sum) - tf.math.square(weight_mean) * self.x_variance
+        b = self.x_variance + tf.math.square(self.x_mean)
+        variance = tf.math.divide_no_nan(a, b)
+
+        std = tf.math.sqrt(variance)
+
+        weights = tfp.distributions.TruncatedNormal(
+            weight_mean,
+            std,
+            low=0,
+            high=2 * weight_mean,
+        ).sample(shape)
+
+        weights = tf.maximum(weights, 0.0)
+
+        return weights
+
 
 parser = argparse.ArgumentParser("photo_exp")
 parser.add_argument('--log_name', type=str, default="soifsonsei")
@@ -27,7 +68,7 @@ args = parser.parse_args()
 ### Config ###
 
 tf.keras.utils.set_random_seed(
-    0
+    25235
 )
 
 use_data_augmentation = False
@@ -40,7 +81,7 @@ relative_sample_size = 0.1
 near_zero_border = 0.01
 sample_mask = None
 
-center_act_function = 1.0  # mean_activation
+center_act_function = 0.25  # mean_activation
 
 # mean and std for data.
 mean_input = center_act_function
@@ -54,8 +95,8 @@ stddev_kernel = 0.05
 mean_bias = center_act_function
 stddev_bias = 0.05
 
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)  # MadamSign() tf.keras.optimizers.Adam() # SGDSign(learning_rate=0.01) tf.keras.optimizers.SGD()
-activation_schema = ExhibitoryInhibitory(center=center_act_function, alpha=0.5)
+optimizer = MadamSign()  # MadamSign() tf.keras.optimizers.Adam() # SGDSign(learning_rate=0.01) tf.keras.optimizers.SGD()
+activation_schema = ExhibitoryInhibitory(center=center_act_function, alpha=1.0)
 kernel_initializer = NormalSign
 bias_initializer = tf.constant_initializer(
     value=0.0
@@ -64,7 +105,7 @@ bias_initializer = tf.constant_initializer(
 
 class NonNegativeAbs(tf.keras.constraints.Constraint):
     def __call__(self, w):
-        return tf.maximum(w, 0.0)
+        return tf.abs(w)
 
 
 # Dataset
@@ -107,6 +148,7 @@ class TensorboardCallback(tf.keras.callbacks.Callback):
                 sample_mask = tf.less(tf.random.uniform(complete_weight_checkpoint.shape), relative_sample_size)
 
             sampled_weight_checkpoint = tf.boolean_mask(complete_weight_checkpoint, sample_mask)
+            sampled_weight_checkpoint = tf.abs(sampled_weight_checkpoint)
 
             tf.summary.histogram("weights", sampled_weight_checkpoint, step=epoch)
 
@@ -235,43 +277,17 @@ class CustomModel(tf.keras.Model):
                     y_variance=y_variance,
                     x=x,
                 )
-
-                opt_tmp = tf.keras.optimizers.SGD(learning_rate=1.0, momentum=0.9)
-                for ts in range(999999999999):
-                    with tf.GradientTape() as tape:
-                        x_tmp = layer(x, training=True)
-
-                        mean_loss = tf.math.square(tf.reduce_mean(x_tmp) - center_act_function)
-                        var_loss = tf.math.square(tf.math.reduce_std(x_tmp) - stddev_input)
-
-                        loss = mean_loss + var_loss
-                        tf.print(ts)
-                        tf.print(mean_loss + var_loss)
-
-                        if loss <= 1e-5:
-                            print("blal:")
-                            print(tf.math.reduce_std(layer.kernel))
-                            break
-
-                        vars = [layer.kernel, layer.bias]
-                        grads = tape.gradient(loss, vars)
-
-                        grads, _ = tf.clip_by_global_norm(grads, 5.0)
-                        opt_tmp.apply_gradients(zip(grads, vars))
-
-                        for var in vars:
-                            var.assign(tf.abs(var))
-
-            #x_mean = tf.math.reduce_mean(x)
-            #x_std = tf.math.reduce_std(x)
+            if hasattr(layer, 'bias_initializer') and not hasattr(layer, 'bias'):
+                x_mean = tf.math.reduce_mean(x)
+                layer.bias_initializer = tf.constant_initializer(
+                    value=tf.squeeze(center_act_function - x_mean).numpy()
+                )
+            x_mean = tf.math.reduce_mean(x)
+            x_std = tf.math.reduce_std(x)
             x = layer(x, training=training)
-            #x_mean2 = tf.math.reduce_mean(x)
-            #x_std2 = tf.math.reduce_std(x)
-            #print("---------------std and mean")
-            #print(x_mean2)
-            #print(x_std2)
-            if tf.executing_eagerly():
-                y_variance = tf.math.square(tf.math.reduce_std(x))
+            x_mean2 = tf.math.reduce_mean(x)
+            x_std2 = tf.math.reduce_std(x)
+            y_variance = tf.math.square(tf.math.reduce_std(x))
             if act is not None:
                 x = act(x)
 
@@ -312,9 +328,9 @@ model.compile(optimizer=optimizer,
               metrics=['accuracy'],
               run_eagerly=False)
 
-reduce_lr = ReduceLROnPlateau(monitor='loss', factor=0.2, verbose=True,
-                              patience=10, min_lr=0.000001)
-_ = model.fit(train_images, train_labels, batch_size=128, epochs=1000, callbacks=[TensorboardCallback(), reduce_lr],
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, verbose=True,
+                              patience=20, min_lr=0.000001)
+_ = model.fit(train_images, train_labels, batch_size=64, epochs=1000, callbacks=[TensorboardCallback(), reduce_lr],
               validation_data=(test_images, test_labels))
 
 test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
